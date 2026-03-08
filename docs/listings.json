@@ -2,6 +2,7 @@
   {
     "listing": "/index.html",
     "items": [
+      "/posts/linux-logs-to-cloudwatch/index.html",
       "/posts/build-docker-image/index.html",
       "/posts/sqlite-script/index.html",
       "/posts/run-shiny-apps-command-line/index.html",
