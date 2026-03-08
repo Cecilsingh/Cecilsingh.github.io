@@ -1,0 +1,149 @@
+---
+title: "Streaming Linux Log Files to Amazon CloudWatch"
+author: "Cecil Singh"
+date: "2026-03-09"
+categories: [AWS, CloudWatch, Linux, Logging]
+image: "stream.jpg"
+---
+
+You may want to centralize logs from your Linux servers into Amazon CloudWatch for monitoring, troubleshooting, or compliance purposes. This can be achieved using the CloudWatch agent.
+
+## Installing the CloudWatch Agent
+
+First, you'll need to ensure that your EC2 instance has an IAM role with the **CloudWatchAgentServerPolicy** attached. For on-premises servers, you'll need to create an IAM user with this policy and generate access keys. AWS-hosted servers should work out-of-the-box.
+
+Once that's done, you can install the agent. On Amazon Linux 2, RHEL, or CentOS:
+
+```bash
+sudo yum install -y amazon-cloudwatch-agent
+```
+
+On Ubuntu or Debian:
+
+```bash
+wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+sudo dpkg -i amazon-cloudwatch-agent.deb
+```
+
+## Configuring the Agent
+
+Next, we need to create a configuration file. Create the file at `/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json`:
+
+```json
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/syslog",
+            "log_group_name": "/linux/syslog",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/auth.log",
+            "log_group_name": "/linux/auth",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+You can add additional log files to the `collect_list` array. The `{instance_id}` placeholder will automatically be replaced with your EC2 instance ID. Wildcards are also supported in the `file_path` (e.g., `/var/log/*.log`).
+
+## File Permissions
+
+The CloudWatch agent runs as the `cwagent` user by default, so you'll need to ensure the log files are readable:
+
+```bash
+sudo usermod -aG adm cwagent
+```
+
+Alternatively, you can set `"run_as_user": "root"` in the configuration file if you'd prefer to run the agent as root.
+
+## Starting the Agent
+
+Once your configuration is ready, start the agent:
+
+```bash
+sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  -s
+```
+
+For on-premises servers, use `-m onPremise` instead of `-m ec2`.
+
+You can verify the agent is running with:
+
+```bash
+sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status
+```
+
+To ensure the agent starts on boot:
+
+```bash
+sudo systemctl enable amazon-cloudwatch-agent
+```
+
+## Example: Collecting Posit Workbench Logs
+
+If you're running Posit Workbench, you may want to stream the application logs to CloudWatch. Here's an example configuration:
+
+```json
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/rstudio/rstudio-server/*.log",
+            "log_group_name": "/posit/workbench",
+            "log_stream_name": "{instance_id}-rserver",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/rstudio/launcher/*.log",
+            "log_group_name": "/posit/launcher",
+            "log_stream_name": "{instance_id}-launcher",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/lib/rstudio-server/audit/r-sessions/*.csv",
+            "log_group_name": "/posit/audit",
+            "log_stream_name": "{instance_id}-sessions",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+If logs aren't appearing in CloudWatch, check the agent logs:
+
+```bash
+sudo tail -f /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log
+```
+
+Common issues include permission errors (ensure `cwagent` can read the files) and IAM policy issues (ensure the role has `logs:CreateLogGroup`, `logs:CreateLogStream`, and `logs:PutLogEvents` permissions).
+
+More information can be found here:
+https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Install-CloudWatch-Agent.html
